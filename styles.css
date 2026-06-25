@@ -76,13 +76,12 @@ body {
   gap: 5px;
   align-content: start;
 }
-/* 月视图：方格拉伸填满高度，月历更大更饱满 */
+/* 月视图：正方形小方格、靠顶排列，底部自然留白 */
 .calendar.month {
-  grid-auto-rows: 1fr;
-  height: 100%;
-  align-content: stretch;
+  grid-auto-rows: auto;
+  align-content: start;
 }
-.calendar.month .cell { aspect-ratio: auto; }
+.calendar.month .cell { aspect-ratio: 1 / 1; }
 /* 周视图：2 列网格，左上角迷你月历 + 7 个日格(周一→周日) */
 .calendar.week {
   grid-template-columns: repeat(2, 1fr);
@@ -139,24 +138,24 @@ body {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   grid-template-rows: auto repeat(6, 1fr); /* 表头 + 最多 6 周 */
-  gap: 1px; flex: 1; min-height: 0;
+  gap: 0; flex: 1; min-height: 0;
 }
-.mini-wd { font-size: 8px; color: var(--muted); text-align: center; }
+.mini-wd { font-size: 8px; color: var(--muted); text-align: center; padding-bottom: 2px; }
 .mini-day {
   font-size: 9px; text-align: center; color: var(--ink);
   display: flex; align-items: center; justify-content: center;
-  border-radius: 3px; min-height: 0;
+  min-height: 0;
 }
 .mini-day.blank { visibility: hidden; }
 .mini-day.mini-today { font-weight: 700; color: #C8843A; }
-/* 当前周高亮 + 方框 */
+/* 当前周高亮 + 融合成一个大方框(整行连续) */
 .mini-day.in-week {
   background: rgba(241,148,138,.18);
   border-top: 1.5px solid var(--sun);
   border-bottom: 1.5px solid var(--sun);
 }
-.mini-day.wk-start { border-left: 1.5px solid var(--sun); border-radius: 4px 0 0 4px; }
-.mini-day.wk-end { border-right: 1.5px solid var(--sun); border-radius: 0 4px 4px 0; }
+.mini-day.wk-start { border-left: 1.5px solid var(--sun); border-radius: 5px 0 0 5px; }
+.mini-day.wk-end { border-right: 1.5px solid var(--sun); border-radius: 0 5px 5px 0; }
 
 /* 物理 canvas：覆盖整个日历内容(随方格一起滚动)，不拦截点击 */
 .physics-canvas {

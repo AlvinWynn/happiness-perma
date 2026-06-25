@@ -140,20 +140,42 @@
         p.x += p.vx * dt;
         p.y += p.vy * dt;
       }
-      // 同格软排斥(简单两两，单格数量小，开销可忽略)
-      for (let i = 0; i < ps.length; i++) {
-        for (let j = i + 1; j < ps.length; j++) {
-          const a = ps[i], b = ps[j];
-          if (a.cellId !== b.cellId) continue;
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const dist = Math.hypot(dx, dy) || 0.001;
-          const min = a.r + b.r;
-          if (dist < min) {
-            const push = (min - dist) * REPEL;
-            const nx = dx / dist, ny = dy / dist;
-            if (!a.dragging) { a.x -= nx * push; a.y -= ny * push; }
-            if (!b.dragging) { b.x += nx * push; b.y += ny * push; }
+      // 同格碰撞分离：完整推开重叠的图标(多次迭代解开连锁重叠)，避免相互压盖
+      for (let iter = 0; iter < 4; iter++) {
+        for (let i = 0; i < ps.length; i++) {
+          for (let j = i + 1; j < ps.length; j++) {
+            const a = ps[i], b = ps[j];
+            if (a.cellId !== b.cellId) continue;
+            let dx = b.x - a.x, dy = b.y - a.y;
+            let dist = Math.hypot(dx, dy);
+            const min = a.r + b.r;
+            if (dist < min) {
+              if (dist < 0.001) { // 完全重合：给个确定性偏移避免除零
+                dx = (a.id % 2 ? 1 : -1) * 0.5; dy = 0.5; dist = 0.707;
+              }
+              const overlap = (min - dist);
+              const nx = dx / dist, ny = dy / dist;
+              // 把两者各推开一半，彻底分离
+              const aMove = b.dragging ? overlap : overlap * 0.5;
+              const bMove = a.dragging ? overlap : overlap * 0.5;
+              if (!a.dragging) { a.x -= nx * aMove; a.y -= ny * aMove; }
+              if (!b.dragging) { b.x += nx * bMove; b.y += ny * bMove; }
+              // 沿法线交换一点速度，碰撞后自然弹开而非粘连
+              const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+              if (rvn < 0) {
+                const imp = -rvn * 0.5 * (1 + RESTITUTION);
+                if (!a.dragging) { a.vx -= imp * nx; a.vy -= imp * ny; }
+                if (!b.dragging) { b.vx += imp * nx; b.vy += imp * ny; }
+              }
+            }
           }
+        }
+        // 每次迭代后夹回边界，防止被推出格子
+        for (const p of ps) {
+          const c = this.cells.get(p.cellId);
+          if (!c) continue;
+          p.x = Math.max(c.x + p.r + 1, Math.min(c.x + c.w - p.r - 1, p.x));
+          p.y = Math.max(c.y + p.r + 1, Math.min(c.y + c.h - p.r - 1, p.y));
         }
       }
       // 边界约束 + 回弹
