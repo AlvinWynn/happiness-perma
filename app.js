@@ -1,23 +1,25 @@
 /* app.js — 幸福感知器主逻辑
- * 日历渲染 / 记录弹层(三层选择) / 本地存储 / 重力感应 / 物理世界联动
+ * 周/月视图 / 记录弹层(三层选择) / 当日星标 / 本地存储 / 重力感应 / 物理世界联动
  */
 (function () {
   'use strict';
 
   const CATS = (window.HAPPINESS_DATA && window.HAPPINESS_DATA.categories) || [];
   const STORE_KEY = 'happiness_events_v1';
+  const STAR_KEY = 'happiness_stars_v1';
   const WEEK_FIRST_MON = true; // 周一为每周第一天
 
   // ---------- 存储 ----------
-  // 结构：{ "2026-6-12": [ {uid, catId, subId, tag, emoji, color, ts} ], ... }
-  function loadAll() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  // DB：    { "2026-6-12": [ {uid, catId, subId, tag, emoji, color, ts} ], ... }
+  // STARS： { "2026-6-12": uid }  当日星标事件的 uid(未设置则默认当天第一条)
+  function load(key) {
+    try { return JSON.parse(localStorage.getItem(key)) || {}; }
     catch { return {}; }
   }
-  function saveAll(data) {
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
-  }
-  let DB = loadAll();
+  let DB = load(STORE_KEY);
+  let STARS = load(STAR_KEY);
+  const saveDB = () => localStorage.setItem(STORE_KEY, JSON.stringify(DB));
+  const saveStars = () => localStorage.setItem(STAR_KEY, JSON.stringify(STARS));
 
   function cellKey(y, m, d) { return `${y}-${m + 1}-${d}`; } // m 为 0-based
   function uid() { return Date.now() % 1e9 + Math.floor(Math.random() * 1000); }
@@ -25,20 +27,31 @@
   function addEvent(key, ev) {
     if (!DB[key]) DB[key] = [];
     DB[key].push(ev);
-    saveAll(DB);
+    saveDB();
   }
   function removeEvent(key, evUid) {
     if (!DB[key]) return;
     DB[key] = DB[key].filter(e => e.uid !== evUid);
     if (!DB[key].length) delete DB[key];
-    saveAll(DB);
+    saveDB();
+    if (STARS[key] === evUid) { delete STARS[key]; saveStars(); } // 星标被删→回退默认
+  }
+  // 某天的星标 uid：显式设置优先，否则默认当天第一条
+  function starUidFor(key) {
+    const list = DB[key] || [];
+    if (!list.length) return null;
+    if (STARS[key] != null && list.some(e => e.uid === STARS[key])) return STARS[key];
+    return list[0].uid;
   }
 
   // ---------- 状态 ----------
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let viewMode = 'week';            // 'week' | 'month'
   let viewYear = today.getFullYear();
-  let viewMonth = today.getMonth(); // 0-based
-  let activeKey = null; // 当前弹层操作的日期 key
+  let viewMonth = today.getMonth(); // 0-based(月视图用)
+  let weekStart = mondayOf(today);  // 周视图：当前周的周一
+  let activeKey = null;             // 当前弹层操作的日期 key
 
   // ---------- DOM ----------
   const $ = sel => document.querySelector(sel);
@@ -47,19 +60,72 @@
   const canvas = $('#physicsCanvas');
   const world = new PhysicsWorld(canvas);
 
-  // ---------- 日历渲染 ----------
+  // ---------- 日期工具 ----------
   function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
   function firstWeekday(y, m) {
-    let wd = new Date(y, m, 1).getDay(); // 0=周日
+    let wd = new Date(y, m, 1).getDay();
     return WEEK_FIRST_MON ? (wd === 0 ? 6 : wd - 1) : wd;
   }
+  function mondayOf(date) {
+    const x = new Date(date);
+    const wd = x.getDay();
+    const diff = WEEK_FIRST_MON ? (wd === 0 ? -6 : 1 - wd) : -wd;
+    x.setDate(x.getDate() + diff);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+  function sameDate(a, b) {
+    return a.getFullYear() === b.getFullYear() &&
+           a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
 
-  function renderCalendar() {
-    monthTitle.textContent = `${viewYear} 年 ${viewMonth + 1} 月`;
+  // ---------- 视图渲染 ----------
+  function render() {
+    if (viewMode === 'week') renderWeek();
+    else renderMonth();
+    document.body.classList.toggle('view-week', viewMode === 'week');
+    document.body.classList.toggle('view-month', viewMode === 'month');
+  }
+
+  function makeCell(key, dayNum, isToday) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.dataset.key = key;
+    if (isToday) cell.classList.add('today');
+    const num = document.createElement('span');
+    num.className = 'daynum';
+    num.textContent = dayNum;
+    cell.appendChild(num);
+    if ((DB[key] || []).length) cell.classList.add('has-events');
+    cell.addEventListener('click', () => openSheet(key));
+    return cell;
+  }
+
+  function renderWeek() {
+    calendarEl.className = 'calendar week';
     calendarEl.innerHTML = '';
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    const a = days[0], b = days[6];
+    monthTitle.textContent =
+      `${a.getMonth() + 1}月${a.getDate()}日 – ${b.getMonth() + 1}月${b.getDate()}日`;
+    days.forEach(d => {
+      const key = cellKey(d.getFullYear(), d.getMonth(), d.getDate());
+      calendarEl.appendChild(makeCell(key, d.getDate(), sameDate(d, today)));
+    });
+    requestAnimationFrame(syncPhysics);
+  }
+
+  function renderMonth() {
+    calendarEl.className = 'calendar month';
+    calendarEl.innerHTML = '';
+    monthTitle.textContent = `${viewYear} 年 ${viewMonth + 1} 月`;
     const lead = firstWeekday(viewYear, viewMonth);
     const total = daysInMonth(viewYear, viewMonth);
-
     for (let i = 0; i < lead; i++) {
       const blank = document.createElement('div');
       blank.className = 'cell blank';
@@ -67,57 +133,61 @@
     }
     for (let d = 1; d <= total; d++) {
       const key = cellKey(viewYear, viewMonth, d);
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      cell.dataset.key = key;
       const isToday = viewYear === today.getFullYear() &&
                       viewMonth === today.getMonth() && d === today.getDate();
-      if (isToday) cell.classList.add('today');
-
-      const num = document.createElement('span');
-      num.className = 'daynum';
-      num.textContent = d;
-      cell.appendChild(num);
-
-      const count = (DB[key] || []).length;
-      if (count) cell.classList.add('has-events');
-
-      cell.addEventListener('click', () => openSheet(key, d));
-      calendarEl.appendChild(cell);
+      calendarEl.appendChild(makeCell(key, d, isToday));
     }
-
-    // 网格布满整行需要的尾随空格(可选，CSS grid 已自适应)
     requestAnimationFrame(syncPhysics);
   }
 
-  // 把 DOM 方格坐标同步给物理世界，并重建粒子
+  // 把 DOM 方格坐标同步给物理世界，并按视图重建粒子
   function syncPhysics() {
-    // canvas 以 .calendar 的内容盒为坐标原点，覆盖全部(含滚动)高度
     const baseRect = calendarEl.getBoundingClientRect();
     const fullW = calendarEl.scrollWidth;
     const fullH = calendarEl.scrollHeight;
     world.resize(fullW, fullH);
     canvas.style.width = fullW + 'px';
     canvas.style.height = fullH + 'px';
-    // 让 canvas 左上角与 .calendar 内容盒对齐(补偿 wrap 的 padding)
     canvas.style.left = calendarEl.offsetLeft + 'px';
     canvas.style.top = calendarEl.offsetTop + 'px';
     const cellMap = new Map();
     const eventsByCell = {};
+    const starByCell = {};
     calendarEl.querySelectorAll('.cell:not(.blank)').forEach(cell => {
       const key = cell.dataset.key;
       const r = cell.getBoundingClientRect();
       cellMap.set(key, {
-        x: r.left - baseRect.left,
-        y: r.top - baseRect.top,
-        w: r.width,
-        h: r.height,
+        x: r.left - baseRect.left, y: r.top - baseRect.top,
+        w: r.width, h: r.height,
       });
-      if (DB[key] && DB[key].length) eventsByCell[key] = DB[key];
+      const list = DB[key] || [];
+      if (!list.length) return;
+      const sUid = starUidFor(key);
+      starByCell[key] = sUid;
+      if (viewMode === 'month') {
+        // 月视图：仅显示当日星标图标
+        const sev = list.find(e => e.uid === sUid) || list[0];
+        eventsByCell[key] = [sev];
+      } else {
+        eventsByCell[key] = list; // 周视图：显示全部
+      }
     });
     world.setCells(cellMap);
-    world.rebuildAll(eventsByCell);
+    // 月视图星标图标独此一个，无需光环；周视图给星标加光环
+    world.rebuildAll(eventsByCell, viewMode === 'week' ? starByCell : {});
     world.start();
+  }
+
+  // 局部刷新某格物理(记录增删/改星标后)
+  function refreshCell(key) {
+    const list = DB[key] || [];
+    const sUid = starUidFor(key);
+    if (viewMode === 'month') {
+      const sev = list.find(e => e.uid === sUid) || list[0];
+      world.rebuildCell(key, sev ? [sev] : [], null);
+    } else {
+      world.rebuildCell(key, list, sUid);
+    }
   }
 
   // ---------- 记录弹层 ----------
@@ -128,19 +198,17 @@
   const tagList = $('#tagList');
   const todayEvents = $('#todayEvents');
 
-  function openSheet(key, day) {
+  function openSheet(key) {
     activeKey = key;
-    sheetDate.textContent = `${viewMonth + 1} 月 ${day} 日 · 记录幸福`;
+    const [, m, d] = key.split('-').map(Number);
+    sheetDate.textContent = `${m} 月 ${d} 日 · 记录幸福`;
     renderCats();
     subList.classList.add('hidden');
     tagList.classList.add('hidden');
     renderTodayEvents();
     sheet.classList.remove('hidden');
   }
-  function closeSheet() {
-    sheet.classList.add('hidden');
-    activeKey = null;
-  }
+  function closeSheet() { sheet.classList.add('hidden'); activeKey = null; }
 
   function renderCats() {
     catList.classList.remove('hidden');
@@ -196,7 +264,6 @@
       });
       tagList.appendChild(b);
     });
-    // 自定义输入
     const customWrap = document.createElement('div');
     customWrap.className = 'custom-wrap';
     const input = document.createElement('input');
@@ -218,20 +285,13 @@
 
   function commitEvent(cat, sub, tag) {
     const ev = {
-      uid: uid(),
-      catId: cat.id,
-      subId: sub.id,
-      tag,
-      emoji: sub.emoji || cat.emoji,
-      color: cat.color,
-      ts: Date.now(),
+      uid: uid(), catId: cat.id, subId: sub.id, tag,
+      emoji: sub.emoji || cat.emoji, color: cat.color, ts: Date.now(),
     };
     addEvent(activeKey, ev);
-    // 更新日历该格状态 + 物理
     const cell = calendarEl.querySelector(`.cell[data-key="${activeKey}"]`);
     if (cell) cell.classList.add('has-events');
-    const cellMeta = world.cells.get(activeKey);
-    if (cellMeta) world.rebuildCell(activeKey, DB[activeKey]);
+    refreshCell(activeKey);
     renderTodayEvents();
   }
 
@@ -239,15 +299,46 @@
     const list = DB[activeKey] || [];
     todayEvents.innerHTML = '';
     if (!list.length) return;
+    const multi = list.length >= 2;
+    const sUid = starUidFor(activeKey);
+
     const h = document.createElement('h3');
     h.className = 'today-title';
-    h.textContent = `今日已记录 ${list.length} 条`;
+    h.textContent = multi
+      ? `今日 ${list.length} 条 · 点 ☆ 选当日星标`
+      : `今日已记录 1 条（即当日星标 ★）`;
     todayEvents.appendChild(h);
+
     list.slice().reverse().forEach(ev => {
       const row = document.createElement('div');
       row.className = 'event-row';
       row.style.setProperty('--c', ev.color);
-      row.innerHTML = `<span class="ev-emoji">${ev.emoji}</span><span class="ev-tag">${ev.tag}</span>`;
+      const isStar = ev.uid === sUid;
+      if (isStar) row.classList.add('is-star');
+
+      // 星标按钮：仅多条时可点；单条时显示为已星标且不可改
+      const star = document.createElement('button');
+      star.className = 'ev-star';
+      star.textContent = isStar ? '★' : '☆';
+      star.title = '设为当日星标';
+      if (multi) {
+        star.addEventListener('click', () => {
+          STARS[activeKey] = ev.uid;
+          saveStars();
+          refreshCell(activeKey);
+          renderTodayEvents();
+        });
+      } else {
+        star.disabled = true;
+      }
+      row.appendChild(star);
+
+      const em = document.createElement('span');
+      em.className = 'ev-emoji'; em.textContent = ev.emoji;
+      const tg = document.createElement('span');
+      tg.className = 'ev-tag'; tg.textContent = ev.tag;
+      row.appendChild(em); row.appendChild(tg);
+
       const del = document.createElement('button');
       del.className = 'ev-del';
       del.textContent = '×';
@@ -255,7 +346,7 @@
         removeEvent(activeKey, ev.uid);
         const cell = calendarEl.querySelector(`.cell[data-key="${activeKey}"]`);
         if (cell && !(DB[activeKey] || []).length) cell.classList.remove('has-events');
-        world.rebuildCell(activeKey, DB[activeKey] || []);
+        refreshCell(activeKey);
         renderTodayEvents();
       });
       row.appendChild(del);
@@ -266,14 +357,42 @@
   sheet.querySelectorAll('[data-close]').forEach(el =>
     el.addEventListener('click', closeSheet));
 
-  // ---------- 月份导航 ----------
+  // ---------- 导航 + 视图切换 ----------
   $('#prevMonth').addEventListener('click', () => {
-    viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-    renderCalendar();
+    if (viewMode === 'week') {
+      weekStart.setDate(weekStart.getDate() - 7);
+    } else {
+      viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+    }
+    render();
   });
   $('#nextMonth').addEventListener('click', () => {
-    viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
-    renderCalendar();
+    if (viewMode === 'week') {
+      weekStart.setDate(weekStart.getDate() + 7);
+    } else {
+      viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+    }
+    render();
+  });
+
+  document.querySelectorAll('.vt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.view;
+      if (mode === viewMode) return;
+      if (mode === 'month') {
+        // 周→月：定位到当前周所在的月
+        viewYear = weekStart.getFullYear();
+        viewMonth = weekStart.getMonth();
+      } else {
+        // 月→周：若当月含今天则定位今天那周，否则该月第一周
+        const inThisMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth();
+        weekStart = mondayOf(inThisMonth ? today : new Date(viewYear, viewMonth, 1));
+      }
+      viewMode = mode;
+      document.querySelectorAll('.vt-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.view === mode));
+      render();
+    });
   });
 
   // ---------- 重力感应 ----------
@@ -283,22 +402,19 @@
 
   function handleOrientation(e) {
     // gamma: 左右倾斜[-90,90]，beta: 前后倾斜[-180,180]
-    const g = (e.gamma || 0) / 90;   // 左右 -> gx
-    const b = (e.beta || 0) / 90;    // 前后 -> gy 分量
+    // 用更小的除数(45)放大灵敏度：小幅倾斜也产生明显横向力，让图标轻快摆动
+    const g = (e.gamma || 0) / 45;
+    const b = (e.beta || 0) / 45;
     world.setGravity(
-      Math.max(-1, Math.min(1, g)),
-      Math.max(-0.2, Math.min(1.5, 0.5 + b * 0.7)) // 偏向朝下，倾斜叠加
+      Math.max(-1.4, Math.min(1.4, g)),
+      Math.max(-0.3, Math.min(1.6, 0.45 + b * 0.8))
     );
   }
 
   function enableMotion() {
     const DOE = window.DeviceOrientationEvent;
-    if (!DOE) {
-      motionHint.textContent = '此设备无重力传感器，可拖拽图标';
-      return;
-    }
+    if (!DOE) { motionHint.textContent = '此设备无重力传感器'; return; }
     if (typeof DOE.requestPermission === 'function') {
-      // iOS 13+ 需授权
       DOE.requestPermission().then(state => {
         if (state === 'granted') {
           window.addEventListener('deviceorientation', handleOrientation);
@@ -306,7 +422,7 @@
           enableBtn.classList.add('on');
           enableBtn.textContent = '📱 重力已开启';
         } else {
-          motionHint.textContent = '未授权，已降级为可拖拽';
+          motionHint.textContent = '未授权重力感应';
         }
       }).catch(() => { motionHint.textContent = '授权失败'; });
     } else {
@@ -319,10 +435,8 @@
   enableBtn.addEventListener('click', enableMotion);
 
   // 注：canvas 为 pointer-events:none，点击始终穿透到日历方格。
-  // 桌面无传感器时图标自然沉底；重力感应是手机上的主交互。
-  // (拖拽功能留待后续：需让 canvas 在命中图标时选择性接管事件)
 
   // ---------- 启动 ----------
   window.addEventListener('resize', () => requestAnimationFrame(syncPhysics));
-  renderCalendar();
+  render();
 })();

@@ -40,6 +40,22 @@ body {
 }
 .nav-btn:active { transform: scale(.92); }
 
+/* 视图切换 */
+.view-toggle {
+  display: flex; gap: 4px; justify-content: center;
+  padding: 4px; margin: 4px auto 0;
+  background: var(--card); border-radius: 22px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.06);
+  width: fit-content;
+}
+.vt-btn {
+  border: none; background: none; cursor: pointer;
+  padding: 7px 20px; border-radius: 18px;
+  font-size: 14px; color: var(--muted);
+  transition: background .18s, color .18s;
+}
+.vt-btn.active { background: var(--today); color: #C8843A; font-weight: 600; }
+
 /* 星期 */
 .weekdays {
   display: grid; grid-template-columns: repeat(7, 1fr);
@@ -57,13 +73,22 @@ body {
 .calendar {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: auto;
   gap: 5px;
   align-content: start;
 }
+/* 月视图：正方形小方格，多行 */
+.calendar.month { grid-auto-rows: auto; }
+.calendar.month .cell { aspect-ratio: 1 / 1; }
+/* 周视图：一行七天，方格高高的(沉浸记录区) */
+.calendar.week {
+  grid-template-rows: 1fr;
+  height: 100%;
+}
+.calendar.week .cell { aspect-ratio: auto; height: 100%; }
+.calendar.week .daynum { font-size: 14px; top: 6px; left: 8px; }
+
 .cell {
   position: relative;
-  aspect-ratio: 1 / 1;       /* 正方形方格 */
   background: var(--card);
   border-radius: 12px;
   border: 1px solid var(--line);
@@ -186,11 +211,18 @@ body {
 .today-events { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 10px; }
 .today-title { font-size: 13px; color: var(--muted); margin: 0 0 8px; font-weight: 500; }
 .event-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; margin-bottom: 6px;
   background: var(--card); border-radius: 10px;
   border-left: 4px solid var(--c);
 }
+.event-row.is-star { background: #FFF6E0; }
+.ev-star {
+  border: none; background: none; cursor: pointer;
+  font-size: 20px; line-height: 1; color: #E0A93C;
+  width: 26px; flex-shrink: 0;
+}
+.ev-star:disabled { cursor: default; }
 .ev-emoji { font-size: 18px; }
 .ev-tag { flex: 1; font-size: 14px; }
 .ev-del {

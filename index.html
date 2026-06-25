@@ -13,10 +13,16 @@
 <body>
   <!-- 顶栏 -->
   <header class="topbar">
-    <button id="prevMonth" class="nav-btn" aria-label="上个月">‹</button>
+    <button id="prevMonth" class="nav-btn" aria-label="上一个">‹</button>
     <h1 id="monthTitle" class="month-title">2026 年 6 月</h1>
-    <button id="nextMonth" class="nav-btn" aria-label="下个月">›</button>
+    <button id="nextMonth" class="nav-btn" aria-label="下一个">›</button>
   </header>
+
+  <!-- 视图切换 -->
+  <div class="view-toggle">
+    <button class="vt-btn active" data-view="week">周视图</button>
+    <button class="vt-btn" data-view="month">月视图</button>
+  </div>
 
   <!-- 星期表头 -->
   <div class="weekdays">

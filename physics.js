@@ -8,15 +8,16 @@
 
   const GRAVITY = 1400;        // px/s^2，重力强度
   const RESTITUTION = 0.4;     // 触边回弹系数(0=不弹, 1=完全弹)，0.4≈“微微回弹”
-  const FRICTION = 0.86;       // 触底后的切向摩擦
-  const AIR = 0.992;           // 空气阻尼，防止永久抖动
-  const REST_VEL = 6;          // 低于此速度且贴边则视为静止
+  const FRICTION = 0.92;       // 触底后的切向摩擦(越高越保留横向动能→摆动更活)
+  const AIR = 0.995;           // 空气阻尼(越接近1越轻快、摆动越持久)
+  const REST_VEL = 2;          // 低于此速度且贴边则视为静止
   const REPEL = 0.18;          // 粒子软排斥强度
 
   class Particle {
     constructor(opts) {
       this.id = opts.id;
       this.emoji = opts.emoji;
+      this.star = !!opts.star;      // 是否当日星标
       this.cellId = opts.cellId;   // 所属日方格 key，如 "2026-6-12"
       this.x = opts.x;
       this.y = opts.y;
@@ -66,7 +67,8 @@
     }
 
     // 用某格的全部事件重建该格粒子(在记录新增/月份切换时调用)
-    rebuildCell(cellId, events) {
+    // starUid: 该格星标事件的 uid(可选)
+    rebuildCell(cellId, events, starUid) {
       this.particles = this.particles.filter(p => p.cellId !== cellId);
       const cell = this.cells.get(cellId);
       if (!cell || !events || !events.length) return;
@@ -79,6 +81,7 @@
         this.particles.push(new Particle({
           id: ev.uid,
           emoji: ev.emoji,
+          star: starUid != null && ev.uid === starUid,
           cellId,
           x: cell.x + r + col * (r * 2) + (r * 0.3),
           y: cell.y + r + row * (r * 2),
@@ -88,11 +91,11 @@
       });
     }
 
-    // 全量重建(月份切换)
-    rebuildAll(eventsByCell) {
+    // 全量重建(视图切换)。eventsByCell: {cellId: events[]}, starByCell: {cellId: starUid}
+    rebuildAll(eventsByCell, starByCell) {
       this.particles = [];
       for (const [cellId, events] of Object.entries(eventsByCell)) {
-        this.rebuildCell(cellId, events);
+        this.rebuildCell(cellId, events, starByCell && starByCell[cellId]);
       }
     }
 
@@ -173,6 +176,16 @@
       const ctx = this.ctx;
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
       for (const p of this.particles) {
+        // 星标图标：金色光环
+        if (p.star) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * 1.05, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 200, 60, 0.28)';
+          ctx.fill();
+          ctx.lineWidth = Math.max(1.5, p.r * 0.12);
+          ctx.strokeStyle = 'rgba(245, 170, 30, 0.9)';
+          ctx.stroke();
+        }
         const fontSize = p.r * 1.4;
         ctx.font = fontSize + 'px serif';
         ctx.textAlign = 'center';
