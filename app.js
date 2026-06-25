@@ -113,11 +113,74 @@
     const a = days[0], b = days[6];
     monthTitle.textContent =
       `${a.getMonth() + 1}月${a.getDate()}日 – ${b.getMonth() + 1}月${b.getDate()}日`;
-    days.forEach(d => {
+    // 左上角：缩小版月历(框出当前周)
+    calendarEl.appendChild(renderMiniMonth(days));
+    // 其余 7 格：周一→周日
+    const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    days.forEach((d, i) => {
       const key = cellKey(d.getFullYear(), d.getMonth(), d.getDate());
-      calendarEl.appendChild(makeCell(key, d.getDate(), sameDate(d, today)));
+      calendarEl.appendChild(makeDayCell(key, labels[i], d.getDate(), sameDate(d, today)));
     });
     requestAnimationFrame(syncPhysics);
+  }
+
+  // 周视图日格：顶部星期+日期，下方 phys-zone 容纳重力图标
+  function makeDayCell(key, label, dayNum, isToday) {
+    const cell = document.createElement('div');
+    cell.className = 'cell day-cell';
+    cell.dataset.key = key;
+    if (isToday) cell.classList.add('today');
+    const head = document.createElement('div');
+    head.className = 'day-head';
+    head.innerHTML = `<span class="dh-label">${label}</span><span class="dh-num">${dayNum}</span>`;
+    cell.appendChild(head);
+    const zone = document.createElement('div');
+    zone.className = 'phys-zone';
+    cell.appendChild(zone);
+    if ((DB[key] || []).length) cell.classList.add('has-events');
+    cell.addEventListener('click', () => openSheet(key));
+    return cell;
+  }
+
+  // 左上角缩小版月历：框出当前周所在的整行
+  function renderMiniMonth(weekDays) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mini-month';
+    const y = weekStart.getFullYear(), m = weekStart.getMonth();
+    const title = document.createElement('div');
+    title.className = 'mini-title';
+    title.textContent = `${m + 1}月`;
+    wrap.appendChild(title);
+    const grid = document.createElement('div');
+    grid.className = 'mini-grid';
+    ['一', '二', '三', '四', '五', '六', '日'].forEach(w => {
+      const h = document.createElement('span');
+      h.className = 'mini-wd'; h.textContent = w; grid.appendChild(h);
+    });
+    const lead = firstWeekday(y, m);
+    const total = daysInMonth(y, m);
+    const weekSet = new Set(weekDays.map(d => cellKey(d.getFullYear(), d.getMonth(), d.getDate())));
+    // 当前周落在本月内的首尾日，用于画方框两端
+    const inMonth = weekDays.filter(d => d.getFullYear() === y && d.getMonth() === m);
+    const firstK = inMonth.length ? cellKey(y, m, inMonth[0].getDate()) : null;
+    const lastK = inMonth.length ? cellKey(y, m, inMonth[inMonth.length - 1].getDate()) : null;
+    for (let i = 0; i < lead; i++) {
+      const s = document.createElement('span');
+      s.className = 'mini-day blank'; grid.appendChild(s);
+    }
+    for (let d = 1; d <= total; d++) {
+      const s = document.createElement('span');
+      s.className = 'mini-day'; s.textContent = d;
+      const k = cellKey(y, m, d);
+      if (weekSet.has(k)) s.classList.add('in-week');
+      if (k === firstK) s.classList.add('wk-start');
+      if (k === lastK) s.classList.add('wk-end');
+      if (y === today.getFullYear() && m === today.getMonth() && d === today.getDate())
+        s.classList.add('mini-today');
+      grid.appendChild(s);
+    }
+    wrap.appendChild(grid);
+    return wrap;
   }
 
   function renderMonth() {
@@ -152,20 +215,20 @@
     canvas.style.top = calendarEl.offsetTop + 'px';
     const cellMap = new Map();
     const eventsByCell = {};
-    const starByCell = {};
     calendarEl.querySelectorAll('.cell:not(.blank)').forEach(cell => {
       const key = cell.dataset.key;
-      const r = cell.getBoundingClientRect();
+      // 周视图图标限制在 phys-zone(头部以下)；月视图用整格
+      const bound = cell.querySelector('.phys-zone') || cell;
+      const r = bound.getBoundingClientRect();
       cellMap.set(key, {
         x: r.left - baseRect.left, y: r.top - baseRect.top,
         w: r.width, h: r.height,
       });
       const list = DB[key] || [];
       if (!list.length) return;
-      const sUid = starUidFor(key);
-      starByCell[key] = sUid;
       if (viewMode === 'month') {
         // 月视图：仅显示当日星标图标
+        const sUid = starUidFor(key);
         const sev = list.find(e => e.uid === sUid) || list[0];
         eventsByCell[key] = [sev];
       } else {
@@ -173,20 +236,19 @@
       }
     });
     world.setCells(cellMap);
-    // 月视图星标图标独此一个，无需光环；周视图给星标加光环
-    world.rebuildAll(eventsByCell, viewMode === 'week' ? starByCell : {});
+    world.rebuildAll(eventsByCell, {}); // 不传星标→无金色光环
     world.start();
   }
 
   // 局部刷新某格物理(记录增删/改星标后)
   function refreshCell(key) {
     const list = DB[key] || [];
-    const sUid = starUidFor(key);
     if (viewMode === 'month') {
+      const sUid = starUidFor(key);
       const sev = list.find(e => e.uid === sUid) || list[0];
       world.rebuildCell(key, sev ? [sev] : [], null);
     } else {
-      world.rebuildCell(key, list, sUid);
+      world.rebuildCell(key, list, null);
     }
   }
 
@@ -433,6 +495,28 @@
     }
   }
   enableBtn.addEventListener('click', enableMotion);
+
+  // 默认开启重力：非 iOS 直接挂载；iOS 需用户手势，故首次触屏自动请求授权
+  (function autoEnableMotion() {
+    const DOE = window.DeviceOrientationEvent;
+    if (!DOE) return;
+    if (typeof DOE.requestPermission === 'function') {
+      // iOS：等首次交互(任意点击)自动弹授权，无需用户去找按钮
+      const once = () => {
+        if (!motionOn) enableMotion();
+        document.removeEventListener('touchend', once);
+        document.removeEventListener('click', once);
+      };
+      document.addEventListener('touchend', once, { once: false });
+      document.addEventListener('click', once, { once: false });
+    } else {
+      // Android 等：直接开启
+      window.addEventListener('deviceorientation', handleOrientation);
+      motionOn = true;
+      enableBtn.classList.add('on');
+      enableBtn.textContent = '📱 重力已开启';
+    }
+  })();
 
   // 注：canvas 为 pointer-events:none，点击始终穿透到日历方格。
 
