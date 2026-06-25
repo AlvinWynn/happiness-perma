@@ -1,0 +1,19 @@
+{
+  "name": "幸福感知器",
+  "short_name": "幸福感知",
+  "description": "基于 PERMA 模型，记录每日幸福事件",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF8F0",
+  "theme_color": "#FFF8F0",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# 临时文件
+*.log
+*.tmp
+
+# 源数据(可选保留，这里保留 JSON 作为数据来源说明)
