@@ -1,17 +1,16 @@
 /* physics.js — 轻量粒子物理引擎
  * 每个幸福图标 = 一个圆形粒子，被约束在自己所属的日方格(矩形)内。
- * 支持：重力加速、触边微回弹、粒子间软排斥(避免完全重叠)、拖拽。
+ * 模式：自由漂浮——缓慢飘动、相互碰撞弹开、触边回弹，有呼吸/漂浮感。
  * 不做跨格碰撞——每个日方格是独立沙盒。
  */
 (function () {
   'use strict';
 
-  const GRAVITY = 1400;        // px/s^2，重力强度
-  const RESTITUTION = 0.4;     // 触边回弹系数(0=不弹, 1=完全弹)，0.4≈“微微回弹”
-  const FRICTION = 0.92;       // 触底后的切向摩擦(越高越保留横向动能→摆动更活)
-  const AIR = 0.995;           // 空气阻尼(越接近1越轻快、摆动越持久)
-  const REST_VEL = 2;          // 低于此速度且贴边则视为静止
-  const REPEL = 0.18;          // 粒子软排斥强度
+  const FLOAT_SPEED = 26;      // px/s，目标漂浮速度(缓慢)
+  const SPEED_PULL = 0.6;      // 速度向目标值缓慢回拉的强度(维持漂浮感、不停不飞)
+  const WALL_BOUNCE = 1;       // 触边回弹系数(1=不损失能量，持续漂浮)
+  const COLL_BOUNCE = 1;       // 图标相互碰撞回弹系数(弹性碰撞)
+  const WANDER = 8;            // px/s²，轻微随机扰动，制造呼吸感的不规则游走
 
   class Particle {
     constructor(opts) {
@@ -21,8 +20,11 @@
       this.cellId = opts.cellId;   // 所属日方格 key，如 "2026-6-12"
       this.x = opts.x;
       this.y = opts.y;
-      this.vx = (opts.seed % 7 - 3) * 12;  // 入场给点随机横向速度，确定性(可复现)
-      this.vy = 0;
+      // 入场给一个确定性的缓慢漂浮方向(可复现，不同种子方向各异)
+      const ang = (opts.seed * 2.39996);   // 黄金角散布
+      this.vx = Math.cos(ang) * FLOAT_SPEED;
+      this.vy = Math.sin(ang) * FLOAT_SPEED;
+      this.phase = opts.seed * 1.7;  // 呼吸相位
       this.r = opts.r;
       this.dragging = false;
     }
@@ -35,9 +37,7 @@
       this.dpr = Math.min(window.devicePixelRatio || 1, 2);
       this.particles = [];
       this.cells = new Map();   // cellId -> {x,y,w,h} 屏幕坐标(CSS px)
-      // 重力方向：默认朝下。重力感应会改写 gx/gy。
-      this.gx = 0;
-      this.gy = 1;
+      this.t = 0;               // 累计时间(秒)，用于呼吸扰动
       this.running = false;
       this.lastT = 0;
       this._loop = this._loop.bind(this);
@@ -104,11 +104,6 @@
       }
     }
 
-    setGravity(gx, gy) {
-      this.gx = gx;
-      this.gy = gy;
-    }
-
     start() {
       if (this.running) return;
       this.running = true;
@@ -130,17 +125,23 @@
 
     _step(dt) {
       const ps = this.particles;
-      // 积分
+      this.t += dt;
+      // 漂浮积分：轻微随机游走 + 速度向目标漂浮速度缓拉(不停不飞)，营造呼吸感
       for (const p of ps) {
         if (p.dragging) continue;
-        p.vx += this.gx * GRAVITY * dt;
-        p.vy += this.gy * GRAVITY * dt;
-        p.vx *= AIR;
-        p.vy *= AIR;
+        // 基于时间与相位的平滑扰动(确定性，无需随机数)
+        const wx = Math.cos(this.t * 0.7 + p.phase) + Math.cos(this.t * 1.3 + p.phase * 2.1);
+        const wy = Math.sin(this.t * 0.6 + p.phase * 1.7) + Math.sin(this.t * 1.1 + p.phase);
+        p.vx += wx * WANDER * dt;
+        p.vy += wy * WANDER * dt;
+        // 把速度缓缓拉回目标漂浮速率：太慢则加速、太快则减速
+        const sp = Math.hypot(p.vx, p.vy) || 0.0001;
+        const f = 1 + (FLOAT_SPEED - sp) / sp * SPEED_PULL * dt;
+        p.vx *= f; p.vy *= f;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
       }
-      // 同格碰撞分离：完整推开重叠的图标(多次迭代解开连锁重叠)，避免相互压盖
+      // 同格弹性碰撞：重叠则分离 + 沿法线交换速度，相互弹向反方向
       for (let iter = 0; iter < 4; iter++) {
         for (let i = 0; i < ps.length; i++) {
           for (let j = i + 1; j < ps.length; j++) {
@@ -150,27 +151,25 @@
             let dist = Math.hypot(dx, dy);
             const min = a.r + b.r;
             if (dist < min) {
-              if (dist < 0.001) { // 完全重合：给个确定性偏移避免除零
+              if (dist < 0.001) { // 完全重合：确定性偏移避免除零
                 dx = (a.id % 2 ? 1 : -1) * 0.5; dy = 0.5; dist = 0.707;
               }
               const overlap = (min - dist);
               const nx = dx / dist, ny = dy / dist;
-              // 把两者各推开一半，彻底分离
               const aMove = b.dragging ? overlap : overlap * 0.5;
               const bMove = a.dragging ? overlap : overlap * 0.5;
               if (!a.dragging) { a.x -= nx * aMove; a.y -= ny * aMove; }
               if (!b.dragging) { b.x += nx * bMove; b.y += ny * bMove; }
-              // 沿法线交换一点速度，碰撞后自然弹开而非粘连
+              // 弹性碰撞：沿法线交换速度分量，彼此弹向反方向
               const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
               if (rvn < 0) {
-                const imp = -rvn * 0.5 * (1 + RESTITUTION);
+                const imp = -rvn * 0.5 * (1 + COLL_BOUNCE);
                 if (!a.dragging) { a.vx -= imp * nx; a.vy -= imp * ny; }
                 if (!b.dragging) { b.vx += imp * nx; b.vy += imp * ny; }
               }
             }
           }
         }
-        // 每次迭代后夹回边界，防止被推出格子
         for (const p of ps) {
           const c = this.cells.get(p.cellId);
           if (!c) continue;
@@ -178,24 +177,17 @@
           p.y = Math.max(c.y + p.r + 1, Math.min(c.y + c.h - p.r - 1, p.y));
         }
       }
-      // 边界约束 + 回弹
+      // 触边回弹(几乎无损耗，持续漂浮)
       for (const p of ps) {
         const c = this.cells.get(p.cellId);
         if (!c) continue;
         const pad = 1;
         const left = c.x + p.r + pad, right = c.x + c.w - p.r - pad;
         const top = c.y + p.r + pad, bottom = c.y + c.h - p.r - pad;
-        if (p.x < left)  { p.x = left;  p.vx = -p.vx * RESTITUTION; p.vy *= FRICTION; }
-        if (p.x > right) { p.x = right; p.vx = -p.vx * RESTITUTION; p.vy *= FRICTION; }
-        if (p.y < top)   { p.y = top;   p.vy = -p.vy * RESTITUTION; p.vx *= FRICTION; }
-        if (p.y > bottom){ p.y = bottom;p.vy = -p.vy * RESTITUTION; p.vx *= FRICTION; }
-        // 沉睡
-        if (Math.abs(p.vx) < REST_VEL && Math.abs(p.vy) < REST_VEL) {
-          // 仍受重力会被唤醒，这里只是降抖动
-          if (Math.abs(this.gx) < 0.05 && Math.abs(this.gy - 1) < 0.05) {
-            // 接近静态向下重力时贴底则清零横向抖动
-          }
-        }
+        if (p.x < left)  { p.x = left;  p.vx = Math.abs(p.vx) * WALL_BOUNCE; }
+        if (p.x > right) { p.x = right; p.vx = -Math.abs(p.vx) * WALL_BOUNCE; }
+        if (p.y < top)   { p.y = top;   p.vy = Math.abs(p.vy) * WALL_BOUNCE; }
+        if (p.y > bottom){ p.y = bottom;p.vy = -Math.abs(p.vy) * WALL_BOUNCE; }
       }
     }
 

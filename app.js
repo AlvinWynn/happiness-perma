@@ -1,5 +1,5 @@
 /* app.js — 幸福感知器主逻辑
- * 周/月视图 / 记录弹层(三层选择) / 当日星标 / 本地存储 / 重力感应 / 物理世界联动
+ * 周/月视图 / 记录弹层(三层选择) / 当日星标 / 本地存储 / 自由漂浮物理联动
  */
 (function () {
   'use strict';
@@ -457,68 +457,8 @@
     });
   });
 
-  // ---------- 重力感应 ----------
-  const enableBtn = $('#enableMotion');
-  const motionHint = $('#motionHint');
-  let motionOn = false;
-
-  function handleOrientation(e) {
-    // gamma: 左右倾斜[-90,90]，beta: 前后倾斜[-180,180]
-    // 用更小的除数(45)放大灵敏度：小幅倾斜也产生明显横向力，让图标轻快摆动
-    const g = (e.gamma || 0) / 45;
-    const b = (e.beta || 0) / 45;
-    world.setGravity(
-      Math.max(-1.4, Math.min(1.4, g)),
-      Math.max(-0.3, Math.min(1.6, 0.45 + b * 0.8))
-    );
-  }
-
-  function enableMotion() {
-    const DOE = window.DeviceOrientationEvent;
-    if (!DOE) { motionHint.textContent = '此设备无重力传感器'; return; }
-    if (typeof DOE.requestPermission === 'function') {
-      DOE.requestPermission().then(state => {
-        if (state === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          motionOn = true;
-          enableBtn.classList.add('on');
-          enableBtn.textContent = '📱 重力已开启';
-        } else {
-          motionHint.textContent = '未授权重力感应';
-        }
-      }).catch(() => { motionHint.textContent = '授权失败'; });
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation);
-      motionOn = true;
-      enableBtn.classList.add('on');
-      enableBtn.textContent = '📱 重力已开启';
-    }
-  }
-  enableBtn.addEventListener('click', enableMotion);
-
-  // 默认开启重力：非 iOS 直接挂载；iOS 需用户手势，故首次触屏自动请求授权
-  (function autoEnableMotion() {
-    const DOE = window.DeviceOrientationEvent;
-    if (!DOE) return;
-    if (typeof DOE.requestPermission === 'function') {
-      // iOS：等首次交互(任意点击)自动弹授权，无需用户去找按钮
-      const once = () => {
-        if (!motionOn) enableMotion();
-        document.removeEventListener('touchend', once);
-        document.removeEventListener('click', once);
-      };
-      document.addEventListener('touchend', once, { once: false });
-      document.addEventListener('click', once, { once: false });
-    } else {
-      // Android 等：直接开启
-      window.addEventListener('deviceorientation', handleOrientation);
-      motionOn = true;
-      enableBtn.classList.add('on');
-      enableBtn.textContent = '📱 重力已开启';
-    }
-  })();
-
   // 注：canvas 为 pointer-events:none，点击始终穿透到日历方格。
+  // 图标在各自方格内自由漂浮、相互碰撞弹开、触边回弹(见 physics.js)。
 
   // ---------- 启动 ----------
   window.addEventListener('resize', () => requestAnimationFrame(syncPhysics));
