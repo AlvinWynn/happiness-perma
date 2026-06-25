@@ -58,12 +58,17 @@
       this.particles = this.particles.filter(p => this.cells.has(p.cellId));
     }
 
-    // 根据某格当前的图标数量算半径：越多越小
+    // 图标半径：默认固定理想大小，不随数量缩小；
+    // 仅当该数量的图标按固定大小已装不下整格时，才缩到刚好能装下。
     radiusFor(count, cell) {
-      const base = Math.min(cell.w, cell.h);
-      // 1个≈base*0.32，数量多则收缩，地板 8px
-      const r = base * 0.34 / Math.sqrt(Math.max(count, 1));
-      return Math.max(8, Math.min(r, base * 0.34));
+      const ideal = Math.min(cell.w * 0.24, cell.h * 0.42);
+      const fit = (r) =>
+        Math.max(1, Math.floor(cell.w / (2 * r))) *
+        Math.max(1, Math.floor(cell.h / (2 * r)));
+      if (fit(ideal) >= Math.max(count, 1)) return ideal;
+      // 装不下：按面积反推缩小，留一点余量
+      const r = Math.sqrt((cell.w * cell.h) / (4 * count)) * 0.9;
+      return Math.max(6, Math.min(r, ideal));
     }
 
     // 用某格的全部事件重建该格粒子(在记录新增/月份切换时调用)
