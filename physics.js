@@ -6,12 +6,14 @@
 (function () {
   'use strict';
 
-  const GRAVITY = 300;         // px/s^2，重力强度(更低→更强失重漂浮感)
-  const RESTITUTION = 0.72;    // 触边回弹系数(更高→撞边轻弹更明显)
-  const FRICTION = 0.99;       // 触边后的切向保留(接近1→不削减斜向速度，可45°滑行)
+  const GRAVITY = 220;         // px/s^2，重力强度(很低→月球般失重)
+  const RESTITUTION = 0.78;    // 触边回弹系数(更高→撞边轻弹更明显且持续)
+  const FRICTION = 0.995;      // 触边后的切向保留(接近1→不削减斜向速度，可45°滑行)
   const AIR = 0.998;           // 空气阻尼(越接近1越漂浮、动能越持久)
   const REST_VEL = 2;          // 低于此速度且贴边则视为静止
   const REPEL = 0.18;          // 粒子软排斥强度
+  const PACK = 0.7;            // 碰撞间距系数(<1→图标可挨得更近，间隔更窄)
+  const BOUNCE_KICK = 520;     // 落底后周期性逆重力脉冲强度(持续失重弹跳)
 
   class Particle {
     constructor(opts) {
@@ -24,6 +26,7 @@
       this.vx = (opts.seed % 7 - 3) * 12;  // 入场给点随机横向速度，确定性(可复现)
       this.vy = 0;
       this.r = opts.r;
+      this.phase = (opts.seed % 17) * 0.37; // 失重弹跳相位，使各图标错开节奏
       this.dragging = false;
     }
   }
@@ -134,16 +137,38 @@
 
     _step(dt) {
       const ps = this.particles;
+      this.t = (this.t || 0) + dt;
       // 重力平滑趋近目标(低通滤波)：消除传感器抖动、转向更柔和。
       // base 越大越柔(环绕转圈时图标过渡更顺滑)。
       const smooth = 1 - Math.pow(0.02, dt);
       this.gx += (this.tgx - this.gx) * smooth;
       this.gy += (this.tgy - this.gy) * smooth;
+      const gmag = Math.hypot(this.gx, this.gy) || 0.0001;
+      // 重力方向单位向量(指向"地面")
+      const ngx = this.gx / gmag, ngy = this.gy / gmag;
       // 积分
       for (const p of ps) {
         if (p.dragging) continue;
-        p.vx += this.gx * GRAVITY * dt;
-        p.vy += this.gy * GRAVITY * dt;
+        // 月球失重：减弱整体重力吸引；贴近"地面边"且慢速时，周期性给逆重力小脉冲，
+        // 让图标落底后持续主动回弹(一顿一顿的失重感)，而非一次落定就停。
+        let ax = this.gx * GRAVITY, ay = this.gy * GRAVITY;
+        const c = this.cells.get(p.cellId);
+        if (c && gmag > 0.05) {
+          // 该图标到"重力下方边界"的距离(沿重力方向)
+          const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+          const halfReach = (Math.abs(ngx) * (c.w / 2 - p.r) + Math.abs(ngy) * (c.h / 2 - p.r));
+          const along = (p.x - cx) * ngx + (p.y - cy) * ngy; // 沿重力方向的投影
+          const nearFloor = along > halfReach - p.r * 1.5;   // 接近地面边
+          const slow = Math.hypot(p.vx, p.vy) < 60;
+          if (nearFloor && slow) {
+            // 周期性回弹脉冲(各图标相位错开)，方向逆着重力
+            const pulse = Math.max(0, Math.sin(this.t * 3.2 + p.phase));
+            ax -= ngx * pulse * BOUNCE_KICK;
+            ay -= ngy * pulse * BOUNCE_KICK;
+          }
+        }
+        p.vx += ax * dt;
+        p.vy += ay * dt;
         p.vx *= AIR;
         p.vy *= AIR;
         p.x += p.vx * dt;
@@ -157,7 +182,7 @@
             if (a.cellId !== b.cellId) continue;
             let dx = b.x - a.x, dy = b.y - a.y;
             let dist = Math.hypot(dx, dy);
-            const min = a.r + b.r;
+            const min = (a.r + b.r) * PACK; // 收紧间距，图标可挨得更近
             if (dist < min) {
               if (dist < 0.001) { // 完全重合：给个确定性偏移避免除零
                 dx = (a.id % 2 ? 1 : -1) * 0.5; dy = 0.5; dist = 0.707;

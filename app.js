@@ -464,46 +464,44 @@
   const motionHint = $('#motionHint');
   let motionOn = false;
 
-  function handleOrientation(e) {
-    // 把屏幕当托盘，重力=真实重力向量在屏幕平面的投影(sin)，自然且可倒置。
-    // gamma 左右倾斜[-90,90] -> 屏幕X；beta 前后倾斜[-180,180] -> 屏幕Y。
-    const gamma = e.gamma || 0;
-    const beta = e.beta || 0;
-    const rad = Math.PI / 180;
-    // sin 投影：平放=0、竖直=±1、倒置自然变负(图标会"往上"掉向倒置后的下方)
-    const gx = Math.sin(gamma * rad);
-    const gy = Math.sin(beta * rad);
-    world.setGravity(gx, gy); // 平滑在物理引擎内做，避免机械抖动
+  // 用 devicemotion 的重力向量(accelerationIncludingGravity)，任何姿态(含完全倒置)都正确。
+  // 设备坐标：x 右为正、y 上为正、z 屏幕外为正；重力把该向量指向"地面方向"。
+  // 屏幕重力：gx = -ax/9.8(右倾→向右)，gy = +ay/9.8(顶部朝下→向下落)。
+  function handleMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    const G = 9.81;
+    const gx = Math.max(-1.6, Math.min(1.6, -g.x / G));
+    const gy = Math.max(-1.6, Math.min(1.6, g.y / G));
+    world.setGravity(gx, gy);
+  }
+
+  function attachMotion() {
+    window.addEventListener('devicemotion', handleMotion);
+    motionOn = true;
+    enableBtn.classList.add('on');
+    enableBtn.textContent = '📱 重力已开启';
   }
 
   function enableMotion() {
-    const DOE = window.DeviceOrientationEvent;
-    if (!DOE) { motionHint.textContent = '此设备无重力传感器'; return; }
-    if (typeof DOE.requestPermission === 'function') {
-      DOE.requestPermission().then(state => {
-        if (state === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          motionOn = true;
-          enableBtn.classList.add('on');
-          enableBtn.textContent = '📱 重力已开启';
-        } else {
-          motionHint.textContent = '未授权重力感应';
-        }
+    const DME = window.DeviceMotionEvent;
+    if (!DME) { motionHint.textContent = '此设备无重力传感器'; return; }
+    if (typeof DME.requestPermission === 'function') {
+      DME.requestPermission().then(state => {
+        if (state === 'granted') attachMotion();
+        else motionHint.textContent = '未授权重力感应';
       }).catch(() => { motionHint.textContent = '授权失败'; });
     } else {
-      window.addEventListener('deviceorientation', handleOrientation);
-      motionOn = true;
-      enableBtn.classList.add('on');
-      enableBtn.textContent = '📱 重力已开启';
+      attachMotion();
     }
   }
   enableBtn.addEventListener('click', enableMotion);
 
   // 默认开启重力：非 iOS 直接挂载；iOS 需用户手势，故首次触屏自动请求授权
   (function autoEnableMotion() {
-    const DOE = window.DeviceOrientationEvent;
-    if (!DOE) return;
-    if (typeof DOE.requestPermission === 'function') {
+    const DME = window.DeviceMotionEvent;
+    if (!DME) return;
+    if (typeof DME.requestPermission === 'function') {
       // iOS：等首次交互(任意点击)自动弹授权，无需用户去找按钮
       const once = () => {
         if (!motionOn) enableMotion();
@@ -513,11 +511,7 @@
       document.addEventListener('touchend', once, { once: false });
       document.addEventListener('click', once, { once: false });
     } else {
-      // Android 等：直接开启
-      window.addEventListener('deviceorientation', handleOrientation);
-      motionOn = true;
-      enableBtn.classList.add('on');
-      enableBtn.textContent = '📱 重力已开启';
+      attachMotion(); // Android 等：直接开启
     }
   })();
 
