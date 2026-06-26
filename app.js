@@ -208,6 +208,8 @@
     const baseRect = calendarEl.getBoundingClientRect();
     const fullW = calendarEl.scrollWidth;
     const fullH = calendarEl.scrollHeight;
+    // 月视图图标放大、周视图保持原大小
+    world.viewScale = viewMode === 'month' ? 1.5 : 1;
     world.resize(fullW, fullH);
     canvas.style.width = fullW + 'px';
     canvas.style.height = fullH + 'px';

@@ -6,10 +6,10 @@
 (function () {
   'use strict';
 
-  const GRAVITY = 480;         // px/s^2，重力强度(调低→略微失重的漂浮感)
-  const RESTITUTION = 0.5;     // 触边回弹系数(0=不弹, 1=完全弹)
+  const GRAVITY = 300;         // px/s^2，重力强度(更低→更强失重漂浮感)
+  const RESTITUTION = 0.72;    // 触边回弹系数(更高→撞边轻弹更明显)
   const FRICTION = 0.99;       // 触边后的切向保留(接近1→不削减斜向速度，可45°滑行)
-  const AIR = 0.997;           // 空气阻尼(越接近1越漂浮、动能越持久)
+  const AIR = 0.998;           // 空气阻尼(越接近1越漂浮、动能越持久)
   const REST_VEL = 2;          // 低于此速度且贴边则视为静止
   const REPEL = 0.18;          // 粒子软排斥强度
 
@@ -35,6 +35,7 @@
       this.dpr = Math.min(window.devicePixelRatio || 1, 2);
       this.particles = [];
       this.cells = new Map();   // cellId -> {x,y,w,h} 屏幕坐标(CSS px)
+      this.viewScale = 1;       // 图标大小缩放(月视图放大、周视图=1)
       // 重力方向：默认朝下。重力感应写入 target，实际重力每帧平滑趋近(消除机械抖动)。
       this.gx = 0;
       this.gy = 1;
@@ -63,7 +64,7 @@
     // 图标半径：默认固定理想大小，不随数量缩小；
     // 仅当该数量的图标按固定大小已装不下整格时，才缩到刚好能装下。
     radiusFor(count, cell) {
-      const ideal = Math.min(cell.w * 0.19, cell.h * 0.33);
+      const ideal = Math.min(cell.w * 0.19, cell.h * 0.33) * this.viewScale;
       const fit = (r) =>
         Math.max(1, Math.floor(cell.w / (2 * r))) *
         Math.max(1, Math.floor(cell.h / (2 * r)));
@@ -133,8 +134,9 @@
 
     _step(dt) {
       const ps = this.particles;
-      // 重力平滑趋近目标(低通滤波)：消除传感器抖动带来的机械顿挫，转向更顺滑
-      const smooth = 1 - Math.pow(0.001, dt); // 帧率无关的指数平滑(~时间常数)
+      // 重力平滑趋近目标(低通滤波)：消除传感器抖动、转向更柔和。
+      // base 越大越柔(环绕转圈时图标过渡更顺滑)。
+      const smooth = 1 - Math.pow(0.02, dt);
       this.gx += (this.tgx - this.gx) * smooth;
       this.gy += (this.tgy - this.gy) * smooth;
       // 积分
