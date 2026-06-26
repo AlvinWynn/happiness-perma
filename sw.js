@@ -1,5 +1,5 @@
 /* sw.js — 离线缓存，让 PWA 断网可用 */
-const CACHE = 'happiness-v8';
+const CACHE = 'happiness-v9';
 const ASSETS = [
   './',
   './index.html',

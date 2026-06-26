@@ -6,10 +6,10 @@
 (function () {
   'use strict';
 
-  const GRAVITY = 1400;        // px/s^2，重力强度
-  const RESTITUTION = 0.4;     // 触边回弹系数(0=不弹, 1=完全弹)，0.4≈“微微回弹”
-  const FRICTION = 0.92;       // 触底后的切向摩擦(越高越保留横向动能→摆动更活)
-  const AIR = 0.995;           // 空气阻尼(越接近1越轻快、摆动越持久)
+  const GRAVITY = 480;         // px/s^2，重力强度(调低→略微失重的漂浮感)
+  const RESTITUTION = 0.5;     // 触边回弹系数(0=不弹, 1=完全弹)
+  const FRICTION = 0.99;       // 触边后的切向保留(接近1→不削减斜向速度，可45°滑行)
+  const AIR = 0.997;           // 空气阻尼(越接近1越漂浮、动能越持久)
   const REST_VEL = 2;          // 低于此速度且贴边则视为静止
   const REPEL = 0.18;          // 粒子软排斥强度
 
@@ -63,14 +63,14 @@
     // 图标半径：默认固定理想大小，不随数量缩小；
     // 仅当该数量的图标按固定大小已装不下整格时，才缩到刚好能装下。
     radiusFor(count, cell) {
-      const ideal = Math.min(cell.w * 0.24, cell.h * 0.42);
+      const ideal = Math.min(cell.w * 0.19, cell.h * 0.33);
       const fit = (r) =>
         Math.max(1, Math.floor(cell.w / (2 * r))) *
         Math.max(1, Math.floor(cell.h / (2 * r)));
       if (fit(ideal) >= Math.max(count, 1)) return ideal;
       // 装不下：按面积反推缩小，留一点余量
       const r = Math.sqrt((cell.w * cell.h) / (4 * count)) * 0.9;
-      return Math.max(6, Math.min(r, ideal));
+      return Math.max(5, Math.min(r, ideal));
     }
 
     // 用某格的全部事件重建该格粒子(在记录新增/月份切换时调用)
