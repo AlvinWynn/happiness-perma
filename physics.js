@@ -35,9 +35,11 @@
       this.dpr = Math.min(window.devicePixelRatio || 1, 2);
       this.particles = [];
       this.cells = new Map();   // cellId -> {x,y,w,h} 屏幕坐标(CSS px)
-      // 重力方向：默认朝下。重力感应会改写 gx/gy。
+      // 重力方向：默认朝下。重力感应写入 target，实际重力每帧平滑趋近(消除机械抖动)。
       this.gx = 0;
       this.gy = 1;
+      this.tgx = 0;
+      this.tgy = 1;
       this.running = false;
       this.lastT = 0;
       this._loop = this._loop.bind(this);
@@ -105,8 +107,9 @@
     }
 
     setGravity(gx, gy) {
-      this.gx = gx;
-      this.gy = gy;
+      // 写入目标重力；实际重力在 _step 中平滑趋近，避免传感器抖动造成机械顿挫
+      this.tgx = gx;
+      this.tgy = gy;
     }
 
     start() {
@@ -130,6 +133,10 @@
 
     _step(dt) {
       const ps = this.particles;
+      // 重力平滑趋近目标(低通滤波)：消除传感器抖动带来的机械顿挫，转向更顺滑
+      const smooth = 1 - Math.pow(0.001, dt); // 帧率无关的指数平滑(~时间常数)
+      this.gx += (this.tgx - this.gx) * smooth;
+      this.gy += (this.tgy - this.gy) * smooth;
       // 积分
       for (const p of ps) {
         if (p.dragging) continue;

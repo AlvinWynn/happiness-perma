@@ -463,14 +463,15 @@
   let motionOn = false;
 
   function handleOrientation(e) {
-    // gamma: 左右倾斜[-90,90]，beta: 前后倾斜[-180,180]
-    // 用更小的除数(45)放大灵敏度：小幅倾斜也产生明显横向力，让图标轻快摆动
-    const g = (e.gamma || 0) / 45;
-    const b = (e.beta || 0) / 45;
-    world.setGravity(
-      Math.max(-1.4, Math.min(1.4, g)),
-      Math.max(-0.3, Math.min(1.6, 0.45 + b * 0.8))
-    );
+    // 把屏幕当托盘，重力=真实重力向量在屏幕平面的投影(sin)，自然且可倒置。
+    // gamma 左右倾斜[-90,90] -> 屏幕X；beta 前后倾斜[-180,180] -> 屏幕Y。
+    const gamma = e.gamma || 0;
+    const beta = e.beta || 0;
+    const rad = Math.PI / 180;
+    // sin 投影：平放=0、竖直=±1、倒置自然变负(图标会"往上"掉向倒置后的下方)
+    const gx = Math.sin(gamma * rad);
+    const gy = Math.sin(beta * rad);
+    world.setGravity(gx, gy); // 平滑在物理引擎内做，避免机械抖动
   }
 
   function enableMotion() {
