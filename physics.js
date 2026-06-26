@@ -6,14 +6,19 @@
 (function () {
   'use strict';
 
-  const GRAVITY = 220;         // px/s^2，重力强度(很低→月球般失重)
-  const RESTITUTION = 0.78;    // 触边回弹系数(更高→撞边轻弹更明显且持续)
-  const FRICTION = 0.995;      // 触边后的切向保留(接近1→不削减斜向速度，可45°滑行)
-  const AIR = 0.998;           // 空气阻尼(越接近1越漂浮、动能越持久)
-  const REST_VEL = 2;          // 低于此速度且贴边则视为静止
-  const REPEL = 0.18;          // 粒子软排斥强度
-  const PACK = 0.7;            // 碰撞间距系数(<1→图标可挨得更近，间隔更窄)
-  const BOUNCE_KICK = 520;     // 落底后周期性逆重力脉冲强度(持续失重弹跳)
+  // 失重悬浮模型：图标默认悬在格子中央附近轻轻漂浮(呼吸感)，
+  // 重力感应只施加温和牵引让整团朝倾斜方向缓缓移动；碰边/碰撞才回弹。
+  const TILT_PULL = 240;       // 重力感应牵引力(越大越跟手；不宜过大否则被压到边)
+  const CENTER_PULL = 2.2;     // 回正力：把图标缓缓拉回格子中央(弹簧刚度)
+  const CENTER_DAMP = 0.4;     // 回正阻尼(防止来回过冲)
+  const BREATH = 16;           // 呼吸扰动加速度(制造悬浮的不规则微动)
+  const RESTITUTION = 0.7;     // 触边回弹系数
+  const COLL_BOUNCE = 0.9;     // 图标互撞回弹(弹性)
+  const FRICTION = 0.98;       // 触边切向保留(可斜向滑)
+  const AIR = 0.985;           // 空气阻尼(让漂浮缓和、不越漂越快)
+  const MAX_SPEED = 140;       // 速度上限(避免被牵引/扰动加速到乱飞)
+  const REST_VEL = 2;
+  const PACK = 0.78;           // 碰撞间距系数(<1→图标挨得更近)
 
   class Particle {
     constructor(opts) {
@@ -23,8 +28,8 @@
       this.cellId = opts.cellId;   // 所属日方格 key，如 "2026-6-12"
       this.x = opts.x;
       this.y = opts.y;
-      this.vx = (opts.seed % 7 - 3) * 12;  // 入场给点随机横向速度，确定性(可复现)
-      this.vy = 0;
+      this.vx = (opts.seed % 7 - 3) * 4;   // 入场给点微小漂移速度(确定性、可复现)
+      this.vy = (opts.seed % 5 - 2) * 4;
       this.r = opts.r;
       this.phase = (opts.seed % 17) * 0.37; // 失重弹跳相位，使各图标错开节奏
       this.dragging = false;
@@ -85,19 +90,19 @@
       if (!cell || !events || !events.length) return;
       const r = this.radiusFor(events.length, cell);
       events.forEach((ev, i) => {
-        // 在格子顶部错落落下
-        const cols = Math.max(1, Math.floor(cell.w / (r * 2)));
-        const col = i % cols;
-        const row = Math.floor(i / cols);
+        // 在格子中央附近错落散布(失重悬浮，会被回正力聚到中间)
+        const seed = i + ev.uid % 13;
+        const ang = seed * 2.39996;            // 黄金角散布
+        const rad = Math.min(cell.w, cell.h) * 0.18 * ((seed % 3 + 1) / 3);
         this.particles.push(new Particle({
           id: ev.uid,
           emoji: ev.emoji,
           star: starUid != null && ev.uid === starUid,
           cellId,
-          x: cell.x + r + col * (r * 2) + (r * 0.3),
-          y: cell.y + r + row * (r * 2),
+          x: cell.x + cell.w / 2 + Math.cos(ang) * rad,
+          y: cell.y + cell.h / 2 + Math.sin(ang) * rad,
           r,
-          seed: i + ev.uid % 13,
+          seed,
         }));
       });
     }
@@ -138,39 +143,39 @@
     _step(dt) {
       const ps = this.particles;
       this.t = (this.t || 0) + dt;
-      // 重力平滑趋近目标(低通滤波)：消除传感器抖动、转向更柔和。
-      // base 越大越柔(环绕转圈时图标过渡更顺滑)。
+      // 重力(感应)平滑趋近目标：消除抖动、转向柔和
       const smooth = 1 - Math.pow(0.02, dt);
       this.gx += (this.tgx - this.gx) * smooth;
       this.gy += (this.tgy - this.gy) * smooth;
-      const gmag = Math.hypot(this.gx, this.gy) || 0.0001;
-      // 重力方向单位向量(指向"地面")
-      const ngx = this.gx / gmag, ngy = this.gy / gmag;
-      // 积分
+      // 失重悬浮积分：中心回正(悬在格中央) + 重力牵引(缓缓漂移) + 呼吸扰动
       for (const p of ps) {
         if (p.dragging) continue;
-        // 月球失重：减弱整体重力吸引；贴近"地面边"且慢速时，周期性给逆重力小脉冲，
-        // 让图标落底后持续主动回弹(一顿一顿的失重感)，而非一次落定就停。
-        let ax = this.gx * GRAVITY, ay = this.gy * GRAVITY;
         const c = this.cells.get(p.cellId);
-        if (c && gmag > 0.05) {
-          // 该图标到"重力下方边界"的距离(沿重力方向)
+        let ax = 0, ay = 0;
+        if (c) {
+          // 1) 回正力：把图标拉向格子中央(弹簧)，使其悬浮在中间而非堆到某条边。
+          //    牵引会把"平衡点"从中央偏移，所以倾斜时整团停在偏向倾斜方向的位置悬浮。
           const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
-          const halfReach = (Math.abs(ngx) * (c.w / 2 - p.r) + Math.abs(ngy) * (c.h / 2 - p.r));
-          const along = (p.x - cx) * ngx + (p.y - cy) * ngy; // 沿重力方向的投影
-          const nearFloor = along > halfReach - p.r * 1.5;   // 接近地面边
-          const slow = Math.hypot(p.vx, p.vy) < 60;
-          if (nearFloor && slow) {
-            // 周期性回弹脉冲(各图标相位错开)，方向逆着重力
-            const pulse = Math.max(0, Math.sin(this.t * 3.2 + p.phase));
-            ax -= ngx * pulse * BOUNCE_KICK;
-            ay -= ngy * pulse * BOUNCE_KICK;
-          }
+          const reachX = c.w / 2 - p.r, reachY = c.h / 2 - p.r;
+          // 牵引导致的中心偏移(归一化到格子半径)，倾斜越大整团越靠那一侧但不贴边
+          const offX = Math.max(-1, Math.min(1, this.gx)) * reachX * 0.6;
+          const offY = Math.max(-1, Math.min(1, this.gy)) * reachY * 0.6;
+          const tx = cx + offX, ty = cy + offY; // 目标悬浮点
+          ax += (tx - p.x) * CENTER_PULL - p.vx * CENTER_DAMP;
+          ay += (ty - p.y) * CENTER_PULL - p.vy * CENTER_DAMP;
         }
-        p.vx += ax * dt;
-        p.vy += ay * dt;
-        p.vx *= AIR;
-        p.vy *= AIR;
+        // 2) 重力牵引：温和地朝倾斜方向推(让移动跟手、缓慢)
+        ax += this.gx * TILT_PULL;
+        ay += this.gy * TILT_PULL;
+        // 3) 呼吸扰动：基于时间与各自相位的平滑微动，制造失重悬浮的不规则感
+        ax += Math.cos(this.t * 0.9 + p.phase) * BREATH;
+        ay += Math.sin(this.t * 1.1 + p.phase * 1.7) * BREATH;
+
+        p.vx = (p.vx + ax * dt) * AIR;
+        p.vy = (p.vy + ay * dt) * AIR;
+        // 限速，避免被牵引/扰动越加越快乱飞
+        const sp = Math.hypot(p.vx, p.vy);
+        if (sp > MAX_SPEED) { p.vx *= MAX_SPEED / sp; p.vy *= MAX_SPEED / sp; }
         p.x += p.vx * dt;
         p.y += p.vy * dt;
       }
@@ -197,7 +202,7 @@
               // 沿法线交换一点速度，碰撞后自然弹开而非粘连
               const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
               if (rvn < 0) {
-                const imp = -rvn * 0.5 * (1 + RESTITUTION);
+                const imp = -rvn * 0.5 * (1 + COLL_BOUNCE);
                 if (!a.dragging) { a.vx -= imp * nx; a.vy -= imp * ny; }
                 if (!b.dragging) { b.vx += imp * nx; b.vy += imp * ny; }
               }
@@ -223,13 +228,6 @@
         if (p.x > right) { p.x = right; p.vx = -p.vx * RESTITUTION; p.vy *= FRICTION; }
         if (p.y < top)   { p.y = top;   p.vy = -p.vy * RESTITUTION; p.vx *= FRICTION; }
         if (p.y > bottom){ p.y = bottom;p.vy = -p.vy * RESTITUTION; p.vx *= FRICTION; }
-        // 沉睡
-        if (Math.abs(p.vx) < REST_VEL && Math.abs(p.vy) < REST_VEL) {
-          // 仍受重力会被唤醒，这里只是降抖动
-          if (Math.abs(this.gx) < 0.05 && Math.abs(this.gy - 1) < 0.05) {
-            // 接近静态向下重力时贴底则清零横向抖动
-          }
-        }
       }
     }
 
